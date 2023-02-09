@@ -1,0 +1,582 @@
+>> Initialization
+
+1. run "yarn"
+2. run "yarn init"
+3. run "yarn add --dev hardhat"
+4. run "yarn hardhat" and choose javascript project. choose root directory and add .gitignore
+5. install the other recommended node modules by hardhat
+6. Install the rest of the recommended modules by tutorial:
+
+yarn add --dev @nomiclabs/hardhat-ethers@npm:hardhat-deploy-ethers ethers @nomiclabs/hardhat-etherscan @nomiclabs/hardhat-waffle chai ethereum-waffle hardhat hardhat-contract-sizer hardhat-deploy hardhat-gas-reporter prettier prettier-plugin-solidity solhint solidity-coverage dotenv
+
+7. remove or rename Lock.sol and create Lottery.sol
+8. Import these to hardhat.config.json:
+
+require("@nomicfoundation/hardhat-toolbox");
+require("@nomiclabs/hardhat-waffle");
+require("hardhat-deploy");
+require("solidity-coverage");
+require("hardhat-gas-reporter");
+require("hardhat-contract-sizer");
+require("dotenv").config();
+
+
+
+>> Creating the smart contract
+
+9. write a plan of how you are gonna write the smart contract as comments above the conrtract
+10. Add functions of enterLottery and pickWinner:
+
+    function getEntranceFee() public view returns (uint256) {
+
+    }
+    //function pickWinner() {}
+
+11. Add a variable of entranceFee and a function of getEntranceFee with a constructor which takes entrance fee as arguement:
+
+uint256 private immutable i_entranceFee;
+
+    constructor(uint256 entranceFee) {
+        i_entranceFee = entranceFee;
+    }
+
+function getEntranceFee() public view returns (uint256) {
+        return i_entranceFee;
+    }
+
+#note: the variable is immutable because it won't be changed later.
+12.add a gas efficient error above the contract:
+
+error Lottery__NotEnoughETHEntered();
+
+13. Add this line to the enterLottery function:
+
+ if (msg.value < i_entranceFee) {revert Lottery__NotEnoughETHEntered();}
+
+#note: variables that are immutable better start with i_ and variables that need storage better start with s_
+14. add an array of players:
+
+address payable[] private s_players;
+
+#note: this variable is payable because if a player wins they will have to be paid
+15. add a function to get players:
+
+function getPlayers(uint256 index) public view returns (address) {
+        return s_players[index];
+    }
+
+16. Create and emit a LotteryEnter event
+17. Create a VRF subscribtion in chainlink website and add funds. We do this in order to create a random number to pick winner.
+18. install @chainlink/contracts with yarn
+19. import VRFconsumer to lottery contract:
+
+import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
+
+20. Change pickWinner function to requestWinner and make it external instead of public
+21. create a function called: 
+
+function fulfillRandomWords(
+        uint256 requestId,
+        uint256[] memory randomWords
+    ) internal override {}
+
+22. Change constructor to:
+
+constructor(
+        address vrfCoordinatorV2,
+        uint256 entranceFee
+    ) VRFConsumerBaseV2(vrfCoordinatorV2) {
+        i_entranceFee = entranceFee;
+    }
+
+23. Change the contract to this to create the pick Winner function:
+
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.9;
+
+/* imports */
+
+import "../node_modules/hardhat/console.sol";
+import "../node_modules/@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
+import "../node_modules/@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
+
+/* errors */
+
+error Lottery__NotEnoughETHEntered();
+error Lottery__FailedToSendPrize();
+
+contract Lottery is VRFConsumerBaseV2 {
+    /* State variables */
+    uint256 private immutable i_entranceFee;
+    address payable[] private s_players;
+    VRFCoordinatorV2Interface private immutable i_vrfCoordinator;
+    bytes32 private immutable i_gasLane;
+    uint64 private immutable i_subscriptionId;
+    uint32 private immutable i_callbackGasLimit;
+    uint16 private constant REQUEST_CONFIRMATIONS = 3;
+    uint32 private constant NUM_WORDS = 1;
+
+    /* Lottery variables */
+    address private s_recentWinner;
+
+    /* Events */
+    event LotteryEnter(address indexed player);
+    event RequestedLotteryWinner(uint256 indexed requestId);
+    event WinnerPicked(address indexed winner);
+
+    constructor(
+        address vrfCoordinatorV2,
+        uint256 entranceFee,
+        bytes32 gasLane,
+        uint64 subscriptionId,
+        uint32 callbackGasLimit
+    ) VRFConsumerBaseV2(vrfCoordinatorV2) {
+        i_entranceFee = entranceFee;
+        i_vrfCoordinator = VRFCoordinatorV2Interface(vrfCoordinatorV2);
+        i_gasLane = gasLane;
+        i_subscriptionId = subscriptionId;
+        i_callbackGasLimit = callbackGasLimit;
+    }
+
+    function enterLottery() public payable {
+        if (msg.value < i_entranceFee) {
+            revert Lottery__NotEnoughETHEntered();
+        }
+        s_players.push(payable(msg.sender));
+        emit LotteryEnter(msg.sender);
+    }
+
+    function requestWinner() external {
+        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+            i_gasLane,
+            i_subscriptionId,
+            REQUEST_CONFIRMATIONS,
+            i_callbackGasLimit,
+            NUM_WORDS
+        );
+        emit RequestedLotteryWinner(requestId);
+    }
+
+    function fulfillRandomWords(
+        uint256 /* requestId */,
+        uint256[] memory randomWords
+    ) internal override {
+        uint256 indexOfWinner = randomWords[0] % s_players.length;
+        address payable recentWinner = s_players[indexOfWinner];
+        s_recentWinner = recentWinner;
+        (bool success, ) = recentWinner.call{value: address(this).balance}("");
+        if (!success) {
+            revert Lottery__FailedToSendPrize();
+        }
+        emit WinnerPicked(recentWinner);
+    }
+
+    /* view functions */
+    function getEntranceFee() public view returns (uint256) {
+        return i_entranceFee;
+    }
+
+    function getPlayers(uint256 index) public view returns (address) {
+        return s_players[index];
+    }
+
+    function getRecentWinner() public view returns (address) {
+        return s_recentWinner;
+    }
+}
+
+24. Now we will make it so that the contract will automatically be run and pick a winner without us having to touch it. In order to do this, chainlink keeper will be used.
+25. requestWinner function will then be changed into performUpkeep. We need performUpkeep for automation 
+26. In the end and after adding the automation for picking up a winner and a time interval for the lottery session, the smart contract will be as following:
+
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.9;
+
+//plan
+//Pay and enter the lottery
+//pick a random winner(Verifyibly random)
+//Winner to be selected every X minute automatically
+//using chainlink for automation and randomness
+
+/* imports */
+
+import "../node_modules/hardhat/console.sol";
+import "../node_modules/@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
+import "../node_modules/@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
+import "../node_modules/@chainlink/contracts/src/v0.8/AutomationCompatible.sol";
+
+/* errors */
+
+error Lottery__NotEnoughETHEntered();
+error Lottery__FailedToSendPrize();
+error Lottery__LotteryIsClosed();
+error Lottery__UpkeepNeededReturnedFalse(
+    uint256 currentBalance,
+    uint256 numPlayers,
+    uint256 raffleState
+);
+
+contract Lottery is VRFConsumerBaseV2, AutomationCompatibleInterface {
+    /* Type declerations */
+    enum LotteryState {
+        OPEN,
+        CALCULATING
+    }
+
+    /* State variables */
+    uint256 private immutable i_entranceFee;
+    address payable[] private s_players;
+    VRFCoordinatorV2Interface private immutable i_vrfCoordinator;
+    bytes32 private immutable i_gasLane;
+    uint64 private immutable i_subscriptionId;
+    uint32 private immutable i_callbackGasLimit;
+    uint16 private constant REQUEST_CONFIRMATIONS = 3;
+    uint32 private constant NUM_WORDS = 1;
+    // Lottery variables
+    address private s_recentWinner;
+    LotteryState private s_lotteryState;
+    uint256 private s_lastTimeStamp;
+    uint256 private immutable i_interval;
+
+    /* Events */
+    event LotteryEnter(address indexed player);
+    event RequestedLotteryWinner(uint256 indexed requestId);
+    event WinnerPicked(address indexed winner);
+
+    constructor(
+        address vrfCoordinatorV2,
+        uint256 entranceFee,
+        bytes32 gasLane,
+        uint64 subscriptionId,
+        uint32 callbackGasLimit,
+        uint256 interval
+    ) VRFConsumerBaseV2(vrfCoordinatorV2) {
+        i_entranceFee = entranceFee;
+        i_vrfCoordinator = VRFCoordinatorV2Interface(vrfCoordinatorV2);
+        i_gasLane = gasLane;
+        i_subscriptionId = subscriptionId;
+        i_callbackGasLimit = callbackGasLimit;
+        s_lotteryState = LotteryState(0); // LotteryState.OPEN is also correct
+        s_lastTimeStamp = block.timestamp;
+        i_interval = interval;
+    }
+
+    function enterLottery() public payable {
+        if (msg.value < i_entranceFee) {
+            revert Lottery__NotEnoughETHEntered();
+        }
+        if (s_lotteryState != LotteryState.OPEN) {
+            revert Lottery__LotteryIsClosed();
+        }
+        s_players.push(payable(msg.sender));
+        emit LotteryEnter(msg.sender);
+    }
+
+    /**
+     * @dev This is the function that the chainlink keeper nodes call
+     * they look for the upkeepneeded to return true.
+     * The following should be true in order to return true:
+     * 1. Our time interval should have passed.
+     * 2. The lottery should have at least 1 player and some eth
+     * 3. Our subscription is funded with LINK
+     * 4. The lottery should be in an Open state.
+     */
+
+    function checkUpkeep(
+        bytes memory /* checkData */
+    )
+        public
+        view
+        override
+        returns (bool upkeepNeeded, bytes memory /* performData */)
+    {
+        bool isOpen = s_lotteryState == LotteryState.OPEN;
+        bool timePassed = ((block.timestamp - s_lastTimeStamp) > i_interval);
+        bool hasPlayers = s_players.length > 0;
+        bool hasBalance = address(this).balance > 0;
+        upkeepNeeded = (isOpen && timePassed && hasPlayers && hasBalance);
+    }
+
+    function performUpkeep(bytes calldata /* performData */) external override {
+        (bool upkeepNeeded, ) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Lottery__UpkeepNeededReturnedFalse(
+                address(this).balance,
+                s_players.length,
+                uint256(s_lotteryState)
+            );
+        }
+        s_lotteryState = LotteryState.CALCULATING;
+        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+            i_gasLane,
+            i_subscriptionId,
+            REQUEST_CONFIRMATIONS,
+            i_callbackGasLimit,
+            NUM_WORDS
+        );
+        emit RequestedLotteryWinner(requestId);
+    }
+
+    function fulfillRandomWords(
+        uint256 /* requestId */,
+        uint256[] memory randomWords
+    ) internal override {
+        uint256 indexOfWinner = randomWords[0] % s_players.length;
+        address payable recentWinner = s_players[indexOfWinner];
+        s_recentWinner = recentWinner;
+        s_lotteryState = LotteryState.OPEN;
+        s_players = new address payable[](0);
+        s_lastTimeStamp = block.timestamp;
+        (bool success, ) = recentWinner.call{value: address(this).balance}("");
+        if (!success) {
+            revert Lottery__FailedToSendPrize();
+        }
+        emit WinnerPicked(recentWinner);
+    }
+
+    /* view functions */
+    function getEntranceFee() public view returns (uint256) {
+        return i_entranceFee;
+    }
+
+    function getPlayers(uint256 index) public view returns (address) {
+        return s_players[index];
+    }
+
+    function getRecentWinner() public view returns (address) {
+        return s_recentWinner;
+    }
+
+    function getNumberOfPlayers() public view returns (uint256) {
+        return s_players.length;
+    }
+
+    function getInterval() public view returns (uint256) {
+        return i_interval;
+    }
+}
+
+27. Run "yarn hardhat compile" to compile the lottery contract as well as the imported contracts
+
+
+
+>> Deploying the contract
+
+28. Add the following to the hardhat config:
+
+solidity: {
+    compilers: [{ version: "0.8.17" }, { version: "0.8.0" }],
+  },
+  defaultNetwork: "hardhat",
+  networks: {
+    goerli: {
+      url: process.env.GOERLI_RPC_URL,
+      accounts: [process.env.PRIVATE_KEY],
+      chainId: 5,
+    },
+    mumbai: {
+      url: process.env.MUMBAI_RPC_URL,
+      accounts: [process.env.PRIVATE_KEY],
+      chainId: 80001,
+    },
+  },
+  gasReporter: {
+    enabled: true,
+    currency: "EUR",
+    coinmarketcap: process.env.CMC_API_KEY,
+    token: "ETH",
+  },
+  namedAccounts: {
+    deployer: {
+      default: 0,
+    },
+  },
+
+  29. Install dotenv and add env file and keys.
+  30. Created test folder in contracts folder and bring in the vrfcoordinatorv2mock.sol file from node modules chainlink. 
+  31. Fix the dirrectory errors
+  32. Create a mock deploy js file in deploy folder
+  33. Create helper hardhat config js file and add the following into it:
+
+const { ethers } = require("hardhat");
+const networkConfig = {
+  5: {
+    name: "Goerli-Testnet",
+    vrfCoordinator: "0x2Ca8E0C643bDe4C2E08ab1fA0da3401AdAD7734D",
+    entranceFee: ethers.utils.parseEther("0.001"),
+    gasLane:
+      "0x79d3d8832d904592c0bf9818b621522c988bb8b0c05cdc3b15aea1b6e8db0c15",
+    subscriptionId: "0",
+    callbackGasLimit: "500000",
+    interval: "30",
+  },
+  1: {
+    name: "Ethereum-Mainnet",
+    vrfCoordinator: "0x271682DEB8C4E0901D1a1550aD2e64D568E69909",
+    entranceFee: ethers.utils.parseEther("0.00001"),
+    gasLane:
+      "0x8af398995b04c28e9951adb9721ef74c74f93e6a478f39e7e0777be13527e7ef",
+  },
+  31337: {
+    name: "hardhat",
+    entranceFee: ethers.utils.parseEther("1"),
+    gasLane:
+      "0x79d3d8832d904592c0bf9818b621522c988bb8b0c05cdc3b15aea1b6e8db0c15",
+    //same as goerli because unimportant
+    callbackGasLimit: "500000",
+    interval: "30",
+  },
+  137: {
+    name: "Polygon-Mainnet",
+    vrfCoordinator: "0xAE975071Be8F8eE67addBC1A82488F1C24858067",
+    entranceFee: ethers.utils.parseEther("0.01"),
+    gasLane:
+      "0x6e099d640cde6de9d40ac749b4b594126b0169747122711109c9985d47751f93",
+  },
+  80001: {
+    name: "Mumbai-Testnet",
+    vrfCoordinator: "0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed",
+    entranceFee: ethers.utils.parseEther("0.01"),
+    gasLane:
+      "0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f",
+  },
+};
+
+const developmentChains = ["hardhat", "localhost"];
+
+module.exports = {
+  networkConfig,
+  developmentChains,
+};
+
+
+
+34. Add this network to hh config file:
+
+networks: {
+    hardhat: {
+      chainId: 31337,
+      blockConfirmations: 1,
+    },
+
+35. Add blockConfirmation to goerli network:
+
+blockConfirmations: 6,
+
+36. Add the following to the lottery deeploy js file:
+
+const { ethers, network } = require("hardhat");
+const {
+  networkConfig,
+  developmentChains,
+} = require("../helper-hardhat-config.js");
+
+const VRF_SUB_FUND_AMOUNT = ethers.utils.parseEther("2");
+
+module.exports = async ({ getNamedAccounts, deployments }) => {
+  const { deploy, log } = deployments;
+  const { deployer } = await getNamedAccounts();
+  const chainId = network.config.chainId;
+  let vrfCoordinatorV2Address;
+  const entranceFee = networkConfig[chainId]["entranceFee"];
+  const gasLane = networkConfig[chainId]["gasLane"];
+  const callbackGasLimit = networkConfig[chainId]["callbackGasLimit"];
+  const interval = networkConfig[chainId]["interval"];
+
+  if (developmentChains.includes(network.name)) {
+    const vrfCoordinatorV2Mock = await ethers.getContract(
+      "VRFCoordinatorV2Mock"
+    );
+    vrfCoordinatorV2Address = vrfCoordinatorV2Mock.address;
+    const txnResponse = await vrfCoordinatorV2Mock.createSubscription();
+    const txnReceipt = await txnResponse.wait();
+    subscriptionId = txnReceipt.events[0].args.subId;
+    await vrfCoordinatorV2Mock.fundSubscription(
+      subscriptionId,
+      VRF_SUB_FUND_AMOUNT
+    );
+  } else {
+    vrfCoordinatorV2Address = networkConfig[chainId]["vrfCoordinator"];
+    subscriptionId = networkConfig[chainId]["subscriptionId"];
+  }
+
+  const lottery = await deploy("Lottery", {
+    from: deployer,
+    args: [
+      vrfCoordinatorV2Address,
+      entranceFee,
+      gasLane,
+      subscriptionId,
+      callbackGasLimit,
+      interval,
+    ],
+    log: true,
+    waitConfirmations: network.config.blockConfirmations || 1,
+  });
+  log(
+    "_____________________________Lottery deployed__________________________________"
+  );
+};
+
+
+
+37. Add the following content into mock deploy js file:
+
+const { developmentChains } = require("../helper-hardhat-config.js");
+
+const BASE_FEE = ethers.utils.parseEther("0.25"); //0.25 LINK for the premium, per request
+const GAS_PRICE_LINK = 1e9;
+
+module.exports = async ({ getNamedAccounts, deployments }) => {
+  const { deploy, log } = deployments;
+  const { deployer } = await getNamedAccounts();
+  console.log(deployer);
+  const chainId = network.config.chainId;
+
+  if (developmentChains.includes(network.name)) {
+    log("local network detected, deplyoing mocks now..");
+    await deploy("VRFCoordinatorV2Mock", {
+      from: deployer,
+      log: true,
+      args: [BASE_FEE, GAS_PRICE_LINK],
+    });
+    log(
+      "_____________________________Mock deployed__________________________________"
+    );
+  }
+};
+
+module.exports.tags = ["all", "mocks"];
+
+
+38. Run "yarn hardhat deploy" for mock, and add "--network goerli" for contract deployment on goerli
+
+
+>> Unit testing: not done
+>> Staging test: not done
+
+>> Entering lottery and the rest of the contract should be automatically run
+
+39. Get the subscription ID from vrf.chain.link and add it to goerli network in helper hardhat file
+40. Deploy the contract in Goerli and add the contract address as consumer in vrf.chain.link
+41. Register the contract, the performKeepup function and the rest of required info in keepers.chain.link
+42. Set the time interval to 1 min and change interval from 30 to 60 for goerli network.
+43. Create a js file in scripts folder called enterLottery.js and add the following code:
+
+const { ethers } = require("hardhat");
+
+async function enterLottery() {
+  const lottery = await ethers.getContract("Lottery");
+  await lottery.enterLottery({ value: ethers.utils.parseEther("0.01") });
+  console.log("Entered!");
+}
+
+enterLottery()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+
+44. Run "yarn hardhat run scripts/enterLottery.js --network goerli"
+45. Check in etherscan if lottery has been entered and entrance money has been added. Then after 1 minute, the lottery should automatically run performUpkeep and pick a winner and send the money to them as well as resetting the lottery. The transactions for this can be seen in internal txn in etherscan.
