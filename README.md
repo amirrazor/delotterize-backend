@@ -12,8 +12,6 @@ If you're interested in participating in the lottery or just want to learn more 
 
 ### Built With
 
-This section should list any major frameworks/libraries used to bootstrap your project. Leave any add-ons/plugins for the acknowledgements section. Here are a few examples.
-
 <a href="https://hardhat.org">Hardhat</a></br>
 <a href="https://docs.ethers.org">Ethers.js</a>
 
