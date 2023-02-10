@@ -10,16 +10,12 @@ If you're interested in participating in the lottery or just want to learn more 
 
 
 
-
 ### Built With
 
 This section should list any major frameworks/libraries used to bootstrap your project. Leave any add-ons/plugins for the acknowledgements section. Here are a few examples.
 
-<a href="https://hardhat.org">Hardhat</a>
-
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
+<a href="https://hardhat.org">Hardhat</a></br>
+<a href="https://docs.ethers.org">Ethers.js</a>
 
 
 ## Getting Started
@@ -31,12 +27,14 @@ Run yarn to install all the necessary node modules first:
   yarn
   ```
   
-Try running some of the following tasks:
+The following tasks will get you started with compiling, testing, and deploying the smart contract:
 
 ```shell
-npx hardhat help
-npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat run scripts/deploy.js
+yarn hardhat compile
+yarn hardhat deploy --network goerli
+yarn hardhat test
+REPORT_GAS=true yarn hardhat test
+yarn hardhat node
+yarn hardhat run scripts/deploy.js
 ```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
